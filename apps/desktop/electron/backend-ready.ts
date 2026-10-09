@@ -136,6 +136,7 @@ function waitForDashboardPort(
       done = true
       clearTimeout(timer)
       child.stdout.off('data', onData)
+      child.stderr?.off('data', onStderrData)
       child.off('exit', onExit)
       child.off('error', onError)
     }
@@ -178,6 +179,22 @@ function waitForDashboardPort(
 
     rearmTimer()
     child.stdout.on('data', onData)
+    // venv_sync prints its source-completion banners to STDERR (see
+    // hermes_cli/venv_sync.py), but the READY sentinel comes on STDOUT. Watch
+    // stderr for the banner only, so the deadline re-arms for a healthy
+    // multi-minute post-update repair instead of killing it at 90s (#122206).
+    const onStderrData = (chunk: unknown) => {
+      if (done) {
+        return
+      }
+
+      if (SOURCE_COMPLETION_BANNER_RE.test(String(chunk))) {
+        completionInProgress = true
+        rearmTimer()
+      }
+    }
+
+    child.stderr?.on('data', onStderrData)
     child.on('exit', onExit)
     child.on('error', onError)
 

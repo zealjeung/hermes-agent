@@ -31,14 +31,18 @@ import {
 
 type FakeChildProcess = EventEmitter & {
   stdout: EventEmitter
+  stderr: EventEmitter
 }
 
-// A minimal stand-in for a spawned child process: an EventEmitter with a
-// stdout EventEmitter, matching the surface waitForDashboardPort consumes
-// (child.stdout.on('data'), child.on('exit'|'error') + the .off() teardown).
+// A minimal stand-in for a spawned child process: an EventEmitter with
+// stdout/stderr EventEmitters, matching the surface waitForDashboardPort
+// consumes (child.stdout/stderr.on('data'), child.on('exit'|'error') + the
+// .off() teardown). stderr is separate because venv_sync's completion banners
+// arrive there while the READY sentinel arrives on stdout.
 function makeFakeChild(): FakeChildProcess {
   const child = new EventEmitter() as FakeChildProcess
   child.stdout = new EventEmitter()
+  child.stderr = new EventEmitter()
 
   return child
 }
@@ -361,6 +365,19 @@ test(
   },
   6 * 60_000
 )
+
+test('a banner on STDERR also re-arms the deadline (the real venv_sync path)', async () => {
+  // venv_sync prints its completion banners to STDERR, not stdout
+  // (hermes_cli/venv_sync.py). Watching stdout alone silently missed them, so a
+  // healthy multi-minute post-update repair was killed at the 90s default. The
+  // wait must re-arm from the stderr banner and resolve on the late stdout READY.
+  const child = makeFakeChild()
+  const p = waitForDashboardPort(child, 40)
+  child.stderr.emit('data', 'hermes: finishing an interrupted source update...\n')
+  await new Promise(resolve => setTimeout(resolve, 80))
+  child.stdout.emit('data', 'HERMES_BACKEND_READY port=4488\n')
+  assert.equal(await p, 4488)
+})
 
 test('a banner already in the spawn-time tail also re-arms', async () => {
   // The dormant bufferedOutput gap (#60323): the banner was flushed before the
