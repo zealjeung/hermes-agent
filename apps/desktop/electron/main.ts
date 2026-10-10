@@ -56,6 +56,7 @@ import {
 } from './app-version'
 import { runAppInstallerChecker } from './appinstaller-checker'
 import { installApplicationMenuAfterFirstWindow } from './application-menu-startup'
+import { installPreviewUserAgent } from './preview-ua'
 import { stopBackendChild as stopBackendChildImpl, waitForBackendExit } from './backend-child'
 import {
   type BackendOutputTail,
@@ -1234,6 +1235,13 @@ ipcMain.handle('hermes:embed-host:origin', () => embedHostOrigin())
 // minimized, exactly as before) and return to Chromium's default throttling
 // once the work settles.
 app.commandLine.appendSwitch('disable-renderer-backgrounding')
+
+// SOOP (play.sooplive.com) live players call `<video>.play()` with no user
+// gesture; Chromium blocks that by default and the player bails to a blank
+// frame. The `autoplaypolicy` webpreference is NOT a supported Electron field
+// for <webview> and silently does nothing — the switch must be set at launch so
+// every partition (including all webview guests) inherits it.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
 const SOURCE_REPO_ROOT = path.resolve(APP_ROOT, '../..')
 
@@ -13660,6 +13668,12 @@ function installPreviewGuestPreload() {
       webPreferences.preload = PREVIEW_GUEST_PRELOAD_PATH
     })
   })
+
+  // Normalise the preview partition's user-agent so SOOP-style players that
+  // sniff `navigator.userAgent` do not choke on the `Electron/<version>` token
+  // and mount an empty frame. Derived from the default UA, so other sites still
+  // see ordinary Chrome. See preview-ua.ts for the live-verified evidence.
+  installPreviewUserAgent(session.fromPartition('persist:hermes-preview'))
 }
 
 // Every window we open starts with `show: false` so the renderer's first themed
